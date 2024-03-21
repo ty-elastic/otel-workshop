@@ -87,7 +87,7 @@ services:
     build:
       context: ./src/frontend/
       args:
-        ELASTIC_APM_SERVER_ENDPOINT: ${ELASTIC_APM_SERVER_ENDPOINT}
+        ELASTIC_APM_SERVER_ENDPOINT: ${ELASTIC_APM_SERVER_RUM_ENDPOINT}
     volumes:
       - ./logs:/var/log/nginx
     ports:
