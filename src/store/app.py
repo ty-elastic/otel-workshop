@@ -2,13 +2,10 @@ import logging
 
 from flask import Flask, request
 
-import uuid
+from datetime import datetime, timezone, timedelta
 import redis
 import requests
 from prometheus_client import start_http_server, Summary, Counter
-
-# add explicit otel to demonstrate baggage
-from opentelemetry import baggage, context
 
 # setup prom metrics export
 start_http_server(9090)
@@ -31,12 +28,10 @@ def albums():
 
     logging.getLogger().info("getting albums...")
 
-    # we can explicitly add specific session identifiers to baggage to allow propagation through distributed tracing
-    sessionId = r.get(request.remote_addr)
-    if sessionId == None:
-        r.set(request.remote_addr, uuid.uuid4().hex)
-        sessionId = r.get(request.remote_addr)
-    context.attach(baggage.set_baggage("sessionId", sessionId))
+    last_access = r.get(request.remote_addr)
+    if last_access is not None:
+        logging.getLogger().info(f"{request.remote_addr} last seen @{last_access}")
+    r.set(request.remote_addr, datetime.now(tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
 
     error = request.args.get('error')
     if error == None:

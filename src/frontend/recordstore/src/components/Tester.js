@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from "axios";
 
- function Tester() {
+function Tester() {
 
     const handleBrowserException = async () => {
         throw new Error('Intentional Exception!');
@@ -9,7 +9,9 @@ import axios from "axios";
 
     const handleStore404 = async () => {
         try {
-            await axios.get("/store/junk", {params: {'error': '404'}})
+            await axios.get("/store/junk", {
+                params: {'error': '404'}
+            })
         } catch (err) {
             console.log(err.message)
         }
@@ -17,7 +19,9 @@ import axios from "axios";
 
     const handleStore500 = async () => {
         try {
-            await axios.get("/store/albums", {params: {'error': '500'}})
+            await axios.get("/store/albums", {
+                params: {'error': '500'}
+            })
         } catch (err) {
             console.log(err.message)
         }
@@ -25,7 +29,9 @@ import axios from "axios";
 
     const handleCatalog401= async () => {
         try {
-            await axios.get("/store/albums", {params: {'error': 'remote401'}})
+            await axios.get("/store/albums", {
+                params: {'error': 'remote401'}
+            })
         } catch (err) {
             console.log(err.message)
         }
@@ -33,7 +39,9 @@ import axios from "axios";
     
     const handleCatalogLatency= async () => {
         try {
-            await axios.get("/store/albums", {params: {'error': 'remoteLatency'}})
+            await axios.get("/store/albums", {
+                params: {'error': 'remoteLatency'}
+            })
         } catch (err) {
             console.log(err.message)
         }

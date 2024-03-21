@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from "axios";
 
- function AlbumList() {
+function AlbumList() {
     const [loadingData, setLoadingData] = useState(true);
     const [data, setData] = useState([]);
 
