@@ -10,14 +10,13 @@ RUN npm install
 COPY recordstore/ .
 RUN npm install @elastic/apm-rum --save
 
-ARG ELASTIC_APM_SERVER_RUM_ENDPOINT
-ARG ELASTIC_APM_SERVER_RUM_CREDENTIALS
+ARG ELASTIC_APM_SERVER_ENDPOINT
 RUN echo "\
     import { init as initApm } from '@elastic/apm-rum' \n\
     const apm = initApm({ \n\
         serviceName: 'recordstore', \n\
-        serverUrl: '${ELASTIC_APM_SERVER_RUM_ENDPOINT}', \n\
-        sendCredentials: ${ELASTIC_APM_SERVER_RUM_CREDENTIALS}, \n\
+        serverUrl: '${ELASTIC_APM_SERVER_ENDPOINT}', \n\
+        sendCredentials: true, \n\
         serviceVersion: '0.1.0', \n\
         environment: 'production' \n\
     }) \n\

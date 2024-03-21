@@ -1,2 +1,4 @@
 git clone https://github.com/ty-elastic/otel-workshop.git /workspace
 mkdir -p /workspace/logs
+
+find /workspace \( -name ".git" -o -name ".gitignore" -o -name "instruqt" \) -exec rm -rf -- {} +
