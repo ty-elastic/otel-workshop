@@ -2,6 +2,7 @@ from flask import Flask, request
 
 from datetime import datetime, timezone, timedelta
 import redis
+import logging
 import requests
 from prometheus_client import start_http_server, Summary, Counter
 
@@ -14,6 +15,7 @@ HEALTH_CHECK_COUNTER = Counter('health_checks', 'Count of health checks')
 r = redis.Redis(host='redis', port=6379, decode_responses=True)
 
 app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
 
 @app.route('/health')
 def health():
@@ -24,11 +26,11 @@ def health():
 @app.route('/albums')
 def albums():
 
-    app.logger.warn("getting albums...")
+    app.logger.info("getting albums...")
 
     last_access = r.get(request.remote_addr)
     if last_access is not None:
-        app.logger.warn(f"{request.remote_addr} last seen @ {last_access}")
+        app.logger.info(f"{request.remote_addr} last seen @ {last_access}")
     r.set(request.remote_addr, datetime.now(tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
 
     error = request.args.get('error')
