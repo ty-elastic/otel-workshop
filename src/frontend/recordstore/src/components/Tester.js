@@ -9,7 +9,7 @@ function Tester() {
 
     const handleStore404 = async () => {
         try {
-            await axios.get("/store/junk", {
+            await axios.get("/store/albums", {
                 params: {'error': '404'}
             })
         } catch (err) {

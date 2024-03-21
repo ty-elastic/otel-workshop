@@ -1,8 +1,8 @@
 from flask import Flask, request
+import logging
 
 from datetime import datetime, timezone, timedelta
 import redis
-import logging
 import requests
 from prometheus_client import start_http_server, Summary, Counter
 
@@ -52,4 +52,4 @@ def albums():
         return response.text
         
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=9001)
+    app.run(host="0.0.0.0", port=9001, debug=True)
