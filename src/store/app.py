@@ -1,5 +1,3 @@
-import logging
-
 from flask import Flask, request
 
 from datetime import datetime, timezone, timedelta
@@ -26,11 +24,11 @@ def health():
 @app.route('/albums')
 def albums():
 
-    logging.getLogger().info("getting albums...")
+    app.logger.warn("getting albums...")
 
     last_access = r.get(request.remote_addr)
     if last_access is not None:
-        logging.getLogger().info(f"{request.remote_addr} last seen @{last_access}")
+        app.logger.warn(f"{request.remote_addr} last seen @ {last_access}")
     r.set(request.remote_addr, datetime.now(tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
 
     error = request.args.get('error')
@@ -39,7 +37,7 @@ def albums():
         return response.json()
     # allow intentional errors
     elif error == "404":
-        logging.getLogger().warn("intentionally getting 404")
+        app.logger.warn("intentionally getting 404")
         response = requests.get('http://catalog:9000/junk')
         return response.text
     elif error == "500":
@@ -52,4 +50,4 @@ def albums():
         return response.text
         
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=9001, debug=False)
+    app.run(host="0.0.0.0", port=9001)
