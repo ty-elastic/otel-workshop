@@ -1,0 +1,99 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+
+  redis:
+    endpoint: "redis:6379"
+    collection_interval: 10s
+
+  prometheus:
+    config:
+      scrape_configs:
+      - job_name: 'store'
+        scrape_interval: 10s
+        static_configs:
+        - targets: ['store:9090']
+
+  filelog/catalog:
+    # ingest app log (proprietary format)
+    include: [ logs/catalog.json ]
+    operators:
+      # parse JSON logs from app
+      - type: json_parser
+        # conform timestamp
+        timestamp:
+          parse_from: attributes.timestamp
+          layout_type: strptime
+          location: UTC
+          layout: '%Y-%m-%dT%H:%M:%SZ'
+        # conform severity
+        severity:
+          parse_from: attributes.level
+        # conform body
+        body: attributes.message
+        # conform trace meta
+        trace:
+          trace_id:
+            parse_from: attributes.trace_id
+          span_id:
+            parse_from: attributes.span_id
+
+      # clean up raw attributes parsed above
+      - type: remove
+        field: attributes.timestamp
+      - type: remove
+        field: attributes.level
+      - type: remove
+        field: attributes.message
+      - type: remove
+        field: attributes.trace_id
+        if: attributes.trace_id != nil
+      - type: remove
+        field: attributes.span_id
+        if: attributes.span_id != nil
+
+      # service.name attribute needs to be on the resource
+      - type: regex_parser
+        parse_from: attributes["log.file.name"]
+        regex: '(?P<service_name>.*)\.json'
+      - type: move
+        from: attributes["service_name"]
+        to: resource["service.name"]
+
+      - type: remove
+        field: attributes["log.file.name"]
+
+processors:
+  batch:
+  resource:
+    attributes:
+    - key: deployment.environment
+      value: "production"
+      action: upsert
+
+exporters:
+  logging:
+    verbosity: detailed
+  otlp/elastic: 
+    endpoint: "${ELASTIC_APM_SERVER_ENDPOINT}"
+    tls:
+      insecure: true
+    headers:
+      # Elastic APM Server secret token
+      Authorization: "Bearer ${ELASTIC_APM_SERVER_SECRET}"
+
+service:
+  pipelines:
+    traces:
+      receivers: [ otlp ]
+      processors: [ resource, batch ]
+      exporters: [ otlp/elastic]
+    metrics:
+      receivers: [ otlp, prometheus, redis]
+      processors: [ resource, batch ]
+      exporters: [ otlp/elastic]
+    logs:
+      receivers: [ otlp, filelog/catalog ]
+      processors: [ resource, batch ]
+      exporters: [ otlp/elastic]

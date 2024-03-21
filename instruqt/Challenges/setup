@@ -1,0 +1,2 @@
+git clone https://github.com/ty-elastic/otel-workshop.git /workspace
+mkdir -p /workspace/logs

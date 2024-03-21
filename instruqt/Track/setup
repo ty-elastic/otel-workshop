@@ -1,0 +1,741 @@
+#!/bin/bash 
+
+# Wait for the Instruqt host bootstrap to finish
+until [ -f /opt/instruqt/bootstrap/host-bootstrap-completed ]
+do
+    sleep 1
+done
+
+# Wait for the Kubernetes API server to become available
+while ! curl --silent --fail --output /dev/null http://localhost:8001/api 
+do
+    sleep 1 
+done
+
+# Enable bash completion for kubectl
+echo "source /usr/share/bash-completion/bash_completion" >> /root/.bashrc
+echo "complete -F __start_kubectl k" >> /root/.bashrc
+
+{ apt-get update; apt-get install nginx -y; } &
+
+kubectl create -f https://download.elastic.co/downloads/eck/2.11.0/crds.yaml
+kubectl apply -f https://download.elastic.co/downloads/eck/2.11.0/operator.yaml
+#kubectl apply -f https://raw.githubusercontent.com/elastic/cloud-on-k8s/2.9/config/recipes/elastic-agent/fleet-apm-integration.yaml
+
+echo $GCSKEY >> /tmp/gcs.client.default.credentials_file
+kubectl create secret generic gcs-credentials --from-file=/tmp/gcs.client.default.credentials_file
+rm /tmp/gcs.client.default.credentials_file
+
+echo $GCSKEY_EDEN_WORKSHOP >> /tmp/gcs.client.eden-workshop.credentials_file
+kubectl create secret generic gcs-credentials-eden-workshop --from-file=/tmp/gcs.client.eden-workshop.credentials_file
+rm /tmp/gcs.client.eden-workshop.credentials_file
+
+cat <<EOF | kubectl apply -f -
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: default
+spec:
+  version: 8.12.1
+  count: 1
+  elasticsearchRef:
+    name: elasticsearch
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  config:
+    server.publicBaseUrl: http://localhost:30002
+    #elastic:
+    #  apm:
+    #    active: true
+    #    serverUrl: "http://apm.default.svc:8200"
+    #    secretToken: pkcQROVMCzYypqXs0b
+    telemetry.optIn: false
+    xpack.fleet.agents.elasticsearch.hosts: ["http://elasticsearch-es-http.default.svc:9200"]
+    xpack.fleet.agents.fleet_server.hosts: ["https://fleet-server-agent-http.default.svc:8220"]
+    xpack.fleet.packages:
+    - name: system
+      version: latest
+    - name: elastic_agent
+      version: latest
+    - name: fleet_server
+      version: latest
+    - name: apm
+      version: latest
+    xpack.fleet.agentPolicies:
+    - name: Fleet Server on ECK policy
+      id: eck-fleet-server
+      namespace: default
+      #monitoring_enabled:
+      #- logs
+      #- metrics
+      unenroll_timeout: 900
+      package_policies:
+      - name: fleet_server-1
+        id: fleet_server-1
+        package:
+          name: fleet_server
+    - name: Elastic Agent on ECK policy
+      id: policy-elastic-agent-on-cloud
+      namespace: default
+      #monitoring_enabled:
+      #- logs
+      #- metrics
+      unenroll_timeout: 900
+      package_policies:
+      - name: system-1
+        id: system-1
+        package:
+          name: system
+      - package:
+          name: apm
+        name: apm-1
+        inputs:
+        - type: apm
+          enabled: true
+          vars:
+          - name: host
+            value: 0.0.0.0:8200 
+          - name: url
+            value: "https://apm.default.svc:8200" 
+          - name: secret_token
+            value: pkcQROVMCzYypqXs0b    
+---
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch
+  namespace: default
+spec:
+  version: 8.12.1
+  secureSettings:
+  - secretName: gcs-credentials
+  - secretName: gcs-credentials-eden-workshop
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true
+  nodeSets:
+  - name: default
+    count: 1
+    config:
+      node.store.allow_mmap: false
+      # default is 30, but we need a bit more capacity for elser
+      xpack.ml.max_machine_memory_percent: 35
+    podTemplate:
+      spec:
+        containers:
+        - name: elasticsearch
+          resources:
+            requests:
+              memory: 6Gi
+            limits:
+              memory: 6Gi
+---
+apiVersion: agent.k8s.elastic.co/v1alpha1
+kind: Agent
+metadata:
+  name: fleet-server
+  namespace: default
+spec:
+  version: 8.12.1
+  kibanaRef:
+    name: kibana
+  elasticsearchRefs:
+  - name: elasticsearch
+  mode: fleet
+  fleetServerEnabled: true
+  policyID: eck-fleet-server
+  deployment:
+    replicas: 1
+    podTemplate:
+      spec:
+        serviceAccountName: fleet-server
+        automountServiceAccountToken: true
+        securityContext:
+          runAsUser: 0
+        containers:
+        - name: agent
+          resources:
+            requests:
+              memory: 300Mi
+              cpu: 0.2
+            limits:
+              memory: 1000Mi
+              cpu: 1
+---
+apiVersion: agent.k8s.elastic.co/v1alpha1
+kind: Agent
+metadata: 
+  name: elastic-agent
+  namespace: default
+spec:
+  version: 8.12.1
+  kibanaRef:
+    name: kibana
+  fleetServerRef: 
+    name: fleet-server
+  mode: fleet
+  policyID: policy-elastic-agent-on-cloud
+  image: docker.elastic.co/beats/elastic-agent-complete:8.12.1
+  deployment:
+    replicas: 1
+    podTemplate:
+      spec:
+        securityContext:
+          runAsUser: 1000
+        volumes:
+        - emptyDir: {}
+          name: agent-data
+        containers:
+        - name: agent
+          resources:
+            requests:
+              memory: 300Mi
+              cpu: 0.2
+            limits:
+              memory: 1000Mi
+              cpu: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm
+  namespace: default
+spec:
+  selector:
+    agent.k8s.elastic.co/name: elastic-agent
+  ports:
+  - protocol: TCP
+    port: 30820
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: default
+spec:
+  selector:
+    kibana.k8s.elastic.co/name: kibana
+  ports:
+  - protocol: TCP
+    nodePort: 30002
+    port: 5601
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: default
+spec:
+  selector:
+    elasticsearch.k8s.elastic.co/cluster-name: elasticsearch
+  ports:
+  - protocol: TCP
+    nodePort: 30920
+    port: 9200
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-nodeport
+  namespace: default
+spec:
+  selector:
+    agent.k8s.elastic.co/name: elastic-agent
+  ports:
+  - protocol: TCP
+    nodePort: 30820
+    port: 8200
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-service
+  namespace: default
+spec:
+  selector:
+    agent.k8s.elastic.co/name: elastic-agent
+  ports:
+  - protocol: TCP
+    port: 8200
+    targetPort: 8200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-nodeport
+  namespace: default
+spec:
+  selector:
+    agent.k8s.elastic.co/name: fleet-server
+    common.k8s.elastic.co/type: agent
+  ports:
+  - protocol: TCP
+    nodePort: 30822
+    port: 8220
+  type: NodePort
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fleet-server
+rules:
+- apiGroups: [""]
+  resources:
+  - pods
+  - namespaces
+  - nodes
+  verbs:
+  - get
+  - watch
+  - list
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+  - leases
+  verbs:
+  - get
+  - create
+  - update
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fleet-server
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fleet-server
+subjects:
+- kind: ServiceAccount
+  name: fleet-server
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: fleet-server
+  apiGroup: rbac.authorization.k8s.io
+EOF
+
+# wait until elasticsearch is created
+echo 'waiting for elasticsearch'
+
+until kubectl get pods -n default | grep -q elasticsearch 
+do
+  sleep 1
+done
+
+echo 'waiting for elasticsearch to be ready'
+
+# wait for all pods to be ready, loop 5 times
+for i in {1..5}
+do
+  if kubectl wait pod -n default -l common.k8s.elastic.co/type --for=condition=Ready --timeout=60s; then
+    break
+  fi  
+  sleep 1
+done
+
+echo 'waiting for kibana'
+until kubectl get pods -n default | grep -q kibana 
+do
+  sleep 1
+done
+echo 'waiting for kibana to be ready'
+
+# wait for all pods to be ready, loop 5 times
+for i in {1..5}
+do
+  if kubectl wait pod -n default -l common.k8s.elastic.co/type --for=condition=Ready --timeout=60s; then
+    break
+  fi  
+  sleep 1
+done
+
+echo 'waiting for fleet-server'
+until kubectl get pods -n default | grep -q fleet-server 
+do
+  sleep 1
+done
+echo 'waiting for fleet-server to be ready'
+
+# wait for all pods to be ready, loop 5 times
+for i in {1..5}
+do
+  if kubectl wait pod -n default -l common.k8s.elastic.co/type --for=condition=Ready --timeout=60s; then
+    break
+  fi  
+  sleep 1
+done
+
+echo 'waiting for elastic-agent'
+until kubectl get pods -n default | grep -q elastic-agent 
+do
+  sleep 1
+done
+echo 'waiting for elastic-agent to be ready'
+
+# wait for all pods to be ready, loop 5 times
+for i in {1..5}
+do
+  if kubectl wait pod -n default -l common.k8s.elastic.co/type --for=condition=Ready --timeout=60s; then
+    break
+  fi  
+  sleep 1
+done
+
+# shebang
+#!/bin/bash
+
+
+
+echo 'ELASTICSEARCH_USERNAME=elastic' >> /root/.env
+# echo without newline
+echo -n 'ELASTICSEARCH_PASSWORD=' >> /root/.env
+
+# read password from kubectl get secret elasticsearch-es-elastic-user -o go-template='{{.data.elastic | base64decode}}', save to file as ELASTICSEARCH_PASSWORD=$value
+kubectl get secret elasticsearch-es-elastic-user -n default -o go-template='{{.data.elastic | base64decode}}' >> /root/.env
+echo '' >> /root/.env
+echo 'ELASTICSEARCH_URL="http://localhost:30920"' >> /root/.env
+echo 'KIBANA_URL="http://localhost:30002"' >> /root/.env
+echo 'BUILD_NUMBER="10"' >> /root/.env
+echo 'ELASTIC_VERSION="8.9.0"' >> /root/.env
+
+echo 'ELASTIC_APM_SERVER_URL=http://apm.default.svc:8200' >> /root/.env
+echo 'ELASTIC_APM_SECRET_TOKEN=pkcQROVMCzYypqXs0b' >> /root/.env
+
+
+
+
+
+{ apt-get update; apt-get install nginx -y; } 
+
+export $(cat /root/.env | xargs) 
+
+BASE64=$(echo -n "elastic:${ELASTICSEARCH_PASSWORD}" | base64)
+
+KIBANA_URL_WITHOUT_PROTOCOL=$(echo $KIBANA_URL | sed -e 's#http[s]\?://##g')
+
+ulimit -n 16384
+
+echo '
+upstream keepalive-upstream {
+  server '${KIBANA_URL_WITHOUT_PROTOCOL}';
+  server '${KIBANA_URL_WITHOUT_PROTOCOL}';
+  server '${KIBANA_URL_WITHOUT_PROTOCOL}';
+  keepalive 64;
+}
+
+server { 
+  listen 30001 default_server;
+  server_name kibana;
+  location /nginx_status {
+    stub_status on;
+    allow 127.0.0.1;
+    deny all;
+  }
+  location / {
+    proxy_set_header Host '${KIBANA_URL_WITHOUT_PROTOCOL}';
+    proxy_pass http://keepalive-upstream;
+    proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+    proxy_set_header Connection "";
+    proxy_hide_header Content-Security-Policy;
+    proxy_set_header X-Scheme $scheme;
+    proxy_set_header Authorization "Basic '${BASE64}'";
+    proxy_set_header Accept-Encoding "";
+    proxy_redirect off;
+    proxy_http_version 1.1;
+    client_max_body_size 20M;
+    proxy_read_timeout 600;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains;";
+    proxy_send_timeout          300;
+    send_timeout                300;
+    proxy_connect_timeout       300;
+ }
+}
+
+upstream fleet-upstream {
+  server localhost:30822;
+  server localhost:30822;
+  server localhost:30822;
+}
+
+server {
+  listen 8220 ssl;
+  
+  server_name fleet-server;
+  ssl_certificate /etc/ssl/certs/nginx-selfsined.crt;
+  ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+  location / {
+    proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+    proxy_pass https://fleet-upstream;
+    proxy_connect_timeout       300;
+    proxy_send_timeout          300;
+    proxy_read_timeout          300;
+    send_timeout                300;
+  }
+}
+server {
+  listen 9200;
+  server_name elasticsearch;
+  
+  location / {
+    proxy_pass http://localhost:30920;
+    proxy_connect_timeout       300;
+    proxy_send_timeout          300;
+    proxy_read_timeout          300;
+    send_timeout                300;
+  }
+}
+' > /etc/nginx/conf.d/default.conf
+
+# enable trial
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: eck-trial-license
+  namespace: elastic-system
+  labels:
+    license.k8s.elastic.co/type: enterprise_trial
+  annotations:
+    elastic.co/eula: accepted 
+EOF
+
+echo '127.0.0.1 fleet-server-agent-http.default.svc' >> /etc/hosts
+echo '127.0.0.1 elasticsearch-es-http.default.svc' >> /etc/hosts
+
+sudo mkdir /etc/ssl/private
+sudo chmod 700 /etc/ssl/private
+
+sudo openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+    -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=fleet-server-agent-http.default.svc" \
+    -keyout /etc/ssl/private/nginx-selfsigned.key  -out /etc/ssl/certs/nginx-selfsined.crt
+
+systemctl restart nginx
+
+
+
+echo '
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: apm-ing
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+  - host: "apm.kubernetes-vm.$_SANDBOX_ID.instruqt.io"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: apm-lb
+            port:
+              number: 8200
+' > /root/ingress-apm.yaml
+
+envsubst < /root/ingress-apm.yaml | kubectl apply -f -
+
+echo '
+apiVersion: v1
+kind: Service
+metadata:
+  name: apm-lb
+  namespace: default
+spec:
+  ports:
+  - name: apm-lb
+    port: 8200
+    protocol: TCP
+    targetPort: 8200
+  selector:
+    agent.k8s.elastic.co/name: elastic-agent
+  type: LoadBalancer
+' > /root/apm-lb.yaml
+
+
+kubectl apply -f /root/apm-lb.yaml
+
+echo '
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana-lb
+  namespace: default
+spec:
+  ports:
+  - name: kibana-lb
+    port: 5601
+    protocol: TCP
+    targetPort: 5601
+  selector:
+    kibana.k8s.elastic.co/name: kibana
+  type: LoadBalancer
+' > /root/kibana-lb.yaml
+
+kubectl apply -f /root/kibana-lb.yaml
+
+kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v2.10/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+
+export AUTH=$(echo -n "elastic:$(kubectl get secret elasticsearch-es-elastic-user -n default -o go-template='{{.data.elastic | base64decode}}')" | base64 -w0)
+
+# middleware that sets request and response header to dummy value
+echo '
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: set-upstream-basic-auth
+spec:
+  headers:
+    customRequestHeaders:
+      X-Request-Id: "123"
+      Authorization: "Basic $AUTH"
+    customResponseHeaders:
+      X-Response-Id: "4567"
+' > /root/middleware.yaml
+
+envsubst < /root/middleware.yaml | kubectl apply -f -
+
+# ingress route for kibana
+
+echo '
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kibana-ing
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+  - match: Host(`kibana.kubernetes-vm.$_SANDBOX_ID.instruqt.io`) && PathPrefix(`/`)
+    kind: Rule
+    services:
+    - name: kibana-lb
+      port: 5601
+    middlewares:
+    - name: set-upstream-basic-auth
+' > /root/ingress-kibana.yaml
+
+envsubst < /root/ingress-kibana.yaml | kubectl apply -f -
+
+
+export $(cat /root/.env | xargs)
+BASE64=$(echo -n "elastic:${ELASTICSEARCH_PASSWORD}" | base64)
+
+output=$(curl 'https://llm-proxy.staging-3.eden.elastic.dev/key/generate' \
+--header 'Authorization: Bearer '"$LLM_PROXY_STAGING"'' \
+--header 'Content-Type: application/json' \
+--data-raw '{"models": ["gpt-4"],"duration": "7d", "metadata": {"user": "instruqt-observe-ml-'"$_SANDBOX_ID"'"}}')
+
+key=$(echo $output | jq -r '.key')
+
+echo "OPENAI_API_KEY=$key" >> /root/.env
+
+export $(cat /root/.env | xargs)
+BASE64=$(echo -n "elastic:${ELASTICSEARCH_PASSWORD}" | base64)
+echo "updating settings"
+
+cat > settings.json << EOF
+{
+   "attributes":{
+      "buildNum":70088,
+      "defaultIndex":"dccd1810-2016-11eb-8016-cf9f9e5961e9",
+      "isDefaultIndexMigrated":true,
+      "notifications:banner":null,
+      "notifications:lifetime:banner":null,
+      "timepicker:quickRanges":"[\n{\n    \"from\": \"2022-06-07T08:20:00+02:00\",\n    \"to\": \"2022-06-07T10:00:00+02:00\",\n    \"display\": \"Database\"\n  },\n    {\n    \"from\": \"now/d\",\n    \"to\": \"now/d\",\n    \"display\": \"Today\"\n  },\n  {\n    \"from\": \"now/w\",\n    \"to\": \"now/w\",\n    \"display\": \"This week\"\n  },\n  {\n    \"from\": \"now-15m\",\n    \"to\": \"now\",\n    \"display\": \"Last 15 minutes\"\n  },\n  {\n    \"from\": \"now-30m\",\n    \"to\": \"now\",\n    \"display\": \"Last 30 minutes\"\n  },\n  {\n    \"from\": \"now-1h\",\n    \"to\": \"now\",\n    \"display\": \"Last 1 hour\"\n  },\n  {\n    \"from\": \"now-24h/h\",\n    \"to\": \"now\",\n    \"display\": \"Last 24 hours\"\n  },\n  {\n    \"from\": \"now-7d/d\",\n    \"to\": \"now\",\n    \"display\": \"Last 7 days\"\n  },\n  {\n    \"from\": \"now-30d/d\",\n    \"to\": \"now\",\n    \"display\": \"Last 30 days\"\n  },\n  {\n    \"from\": \"now-90d/d\",\n    \"to\": \"now\",\n    \"display\": \"Last 90 days\"\n  },\n  {\n    \"from\": \"now-1y/d\",\n    \"to\": \"now\",\n    \"display\": \"Last 1 year\"\n  }\n]"
+   },
+   "coreMigrationVersion":"8.8.0",
+   "created_at":"2024-01-17T15:00:18.968Z",
+   "id":"8.12.0",
+   "managed":false,
+   "references":[
+   ],
+   "type":"config",
+   "typeMigrationVersion":"8.9.0",
+   "updated_at":"2024-01-17T15:00:18.968Z",
+   "version":"Wzg3NDUyMyw4XQ=="
+}
+EOF
+cat settings.json | jq -c > settings.ndjson
+
+mkdir /home/env/
+
+export $(cat /root/.env | xargs)
+# write OPENAI_API_KEY to .env
+echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> /home/env/.env
+
+# remove OPENAI_API_KEY from .env
+sed -i '/OPENAI_API_KEY/d' /root/.env
+
+curl -s -X POST --header "Authorization: Basic $BASE64"  -H "kbn-xsrf: true" \
+"http://localhost:30002/api/saved_objects/_import?overwrite=true" --form file=@settings.ndjson
+
+# ---- VS CODE
+
+curl -fsSL https://code-server.dev/install.sh | sh
+
+mkdir /user-data
+
+cat <<EOT > /lib/systemd/system/code-server@.service
+[Unit]
+Description=code-server
+After=network.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/code-server /workspace/workspace.code-workspace --user-data-dir /user-data --auth none --disable-telemetry --disable-workspace-trust --bind-addr=0.0.0.0:8080
+Restart=always
+User=%i
+
+[Install]
+WantedBy=default.target
+EOT
+
+mkdir -p /workspace
+
+mkdir -p /user-data/Machine
+cat <<EOT >> /user-data/Machine/settings.json
+{
+    "workbench.startupEditor" : "readme",
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "remote.autoForwardPorts": false
+}
+EOT
+
+mkdir -p /user-data/User
+cat <<EOT >> /user-data/User/settings.json
+{
+    "terminal.integrated.cwd": "/workspace"
+}
+EOT
+
+sudo systemctl restart --now code-server@root
+
+# ---- DOCKER
+
+sudo apt -y install docker.io
+sudo apt -y install docker-compose
+
+# ---- WORKSHOP SETUP
+
+PROFILE_FILE=/root/.bashrc
+echo export ELASTIC_APM_SERVER_SECRET="${ELASTIC_APM_SECRET_TOKEN}" >> ${PROFILE_FILE}
+echo export ELASTIC_APM_SERVER_ENDPOINT="http://${HOSTNAME}.${_SANDBOX_ID}.instruqt.io:8200" >> ${PROFILE_FILE}
+
+echo export ELASTIC_APM_SERVER_RUM_CREDENTIALS=true >> ${PROFILE_FILE}
+echo export ELASTIC_APM_SERVER_RUM_ENDPOINT="http://${HOSTNAME}.${_SANDBOX_ID}.instruqt.io/" >> ${PROFILE_FILE}
