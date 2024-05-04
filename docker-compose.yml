@@ -47,8 +47,6 @@ services:
         condition: service_started
       collector:
         condition: service_started
-      redis:
-        condition: service_started
 
   postgresql:
     image: postgres:latest
@@ -77,12 +75,8 @@ services:
     environment:
       ELASTIC_APM_SERVER_ENDPOINT: ${ELASTIC_APM_SERVER_ENDPOINT}
       ELASTIC_APM_SERVER_SECRET: ${ELASTIC_APM_SERVER_SECRET}
-
-  redis:
-    image: redis
-    command: [redis-server]
-    ports:
-      - '6379:6379'
+      POSTGRESQL_USER: "admin"
+      POSTGRESQL_PASSWORD: "password"
 
   frontend:
     platform: "linux/amd64"

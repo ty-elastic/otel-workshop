@@ -3,9 +3,17 @@ receivers:
     protocols:
       grpc:
 
-  redis:
-    endpoint: "redis:6379"
+  postgresql:
+    endpoint: postgresql:5432
+    transport: tcp
+    username: ${POSTGRESQL_USER}
+    password: ${POSTGRESQL_PASSWORD}
+    databases:
+      - MUSIC
     collection_interval: 10s
+    tls:
+      insecure: true
+      insecure_skip_verify: true
 
   prometheus:
     config:
@@ -90,7 +98,7 @@ service:
       processors: [ resource, batch ]
       exporters: [ otlp/elastic]
     metrics:
-      receivers: [ otlp, prometheus, redis]
+      receivers: [ otlp, prometheus, postgresql]
       processors: [ resource, batch ]
       exporters: [ otlp/elastic]
     logs:
