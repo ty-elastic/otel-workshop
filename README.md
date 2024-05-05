@@ -9,3 +9,7 @@
 
 * use the "Record Store" tab to interact with the UI
 * use the "Elastic - APM" tab to interact with Elastic APM
+
+# Architecture
+
+![arch](docs/arch.jpg)
