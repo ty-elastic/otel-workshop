@@ -147,8 +147,13 @@ func (c *Catalog) checkAuth(ctx *gin.Context) bool {
 // getAlbums responds with the list of all albums as JSON.
 func (c *Catalog) getAlbums(ctx *gin.Context) {
 
-	// pull baggage from context (gin otel middleware pulled it from request headers and put it onto context for us)
+	// get current span context (from auto-instrumentation)
 	span := trace.SpanFromContext(ctx.Request.Context())
+	span.SetAttributes(
+		attribute.Bool("test", true),
+	)
+
+	// pull baggage from context (gin otel middleware pulled it from request headers and put it onto context for us)
 	traceBaggage := baggage.FromContext(ctx.Request.Context())
 	for _, member := range traceBaggage.Members() {
 		// set all baggage as span attributes

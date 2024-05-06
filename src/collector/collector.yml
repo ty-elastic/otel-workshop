@@ -47,6 +47,11 @@ receivers:
           span_id:
             parse_from: attributes.span_id
 
+      # service.name attribute needs to be on the resource
+      - type: move
+        from: attributes.service_name
+        to: resource["service.name"]
+
       # clean up raw attributes parsed above
       - type: remove
         field: attributes.timestamp
@@ -60,17 +65,6 @@ receivers:
       - type: remove
         field: attributes.span_id
         if: attributes.span_id != nil
-
-      # service.name attribute needs to be on the resource
-      - type: regex_parser
-        parse_from: attributes["log.file.name"]
-        regex: '(?P<service_name>.*)\.json'
-      - type: move
-        from: attributes["service_name"]
-        to: resource["service.name"]
-
-      - type: remove
-        field: attributes["log.file.name"]
 
 processors:
   batch:
