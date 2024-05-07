@@ -107,6 +107,7 @@ func (c *Catalog) addAlbum(context context.Context, newAlbum *Album) error {
 	return nil
 }
 
+// internal function to check auth
 func (c *Catalog) checkAuth(ctx *gin.Context) bool {
 	// manually create a span
 	_, span := c.tracer.Start(ctx.Request.Context(), "checkAuth")
@@ -146,7 +147,6 @@ func (c *Catalog) checkAuth(ctx *gin.Context) bool {
 
 // getAlbums responds with the list of all albums as JSON.
 func (c *Catalog) getAlbums(ctx *gin.Context) {
-
 	// get current span context (from auto-instrumentation)
 	span := trace.SpanFromContext(ctx.Request.Context())
 	span.SetAttributes(
