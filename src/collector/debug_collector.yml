@@ -1,6 +1,6 @@
 # report:
-# - otelcol_exporter_sent_spans
-# - otelcol_processor_batch_batch_send_size_bytes () with labels.processor:batch/traces
+# - otelcol_exporter_sent_spans, otelcol_exporter_sent_log_records, otelcol_exporter_sent_metric_points
+# - otelcol_processor_batch_batch_send_size_bytes() with labels.processor:batch/traces, batch/metrics, batch/logs
 
 receivers:
   otlp:
@@ -21,18 +21,38 @@ receivers:
               action: drop
 
 processors:
-  filter:
+  # drop unless its a service we want to keep
+  filter/otlp:
     error_mode: ignore
     traces:
       span:
         - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+      spanevent:
+        - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+    metrics:
+      metric:
+        - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+      datapoint:
+        - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+    logs:
+      log_record:
+        - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+
+  filter/telemetry:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'name != "otelcol_exporter_sent_spans" and name != "otelcol_exporter_sent_log_records" and name != "otelcol_exporter_sent_metric_points" and name != "otelcol_processor_batch_batch_send_size_bytes"'
+
   batch/traces:
   batch/metrics:
   batch/logs:
 
 exporters:
-  logging:
+  logging/basic:
     verbosity: basic
+  logging/detailed:
+    verbosity: detailed
   otlp/elastic: 
     endpoint: "${ELASTIC_APM_SERVER_ENDPOINT}"
     tls:
@@ -50,17 +70,18 @@ service:
   pipelines:
     traces:
       receivers: [ otlp ]
-      processors: [ filter, batch/traces ]
-      exporters: [ logging ]
+      processors: [ filter/otlp, batch/traces ]
+      exporters: [ logging/basic ]
     metrics:
       receivers: [ otlp ]
-      processors: [ filter, batch/metrics ]
-      exporters: [ logging ]
+      processors: [ filter/otlp, batch/metrics ]
+      exporters: [ logging/basic ]
     logs:
       receivers: [ otlp ]
-      processors: [ filter, batch/logs ]
-      exporters: [ logging ]
+      processors: [ filter/otlp, batch/logs ]
+      exporters: [ logging/basic ]
 
     metrics/collector:
       receivers: [ prometheus/collector ]
-      exporters: [ otlp/elastic ]
+      processors: [ filter/telemetry ]
+      exporters: [ logging/detailed, otlp/elastic]
