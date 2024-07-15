@@ -107,3 +107,13 @@ services:
     depends_on:
       frontend:
         condition: service_started
+
+  collector-debug:
+    image: otel/opentelemetry-collector-contrib
+    restart: on-failure
+    volumes:
+      - ./src/collector/debug_collector.yml:/collector.yml
+    command: ["--config=/collector.yml"]
+    environment:
+      ELASTIC_APM_SERVER_ENDPOINT: ${ELASTIC_APM_SERVER_ENDPOINT}
+      ELASTIC_APM_SERVER_SECRET: ${ELASTIC_APM_SERVER_SECRET}

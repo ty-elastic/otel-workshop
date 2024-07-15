@@ -1,0 +1,62 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['0.0.0.0:8888']
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: '.*grpc_io.*'
+              action: drop
+
+processors:
+  filter:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] != "proxy" and resource.attributes["service.name"] != "store" and resource.attributes["service.name"] != "catalog"'
+  batch/traces:
+  batch/metrics:
+  batch/logs:
+
+exporters:
+  logging:
+    verbosity: basic
+  otlp/elastic: 
+    endpoint: "${ELASTIC_APM_SERVER_ENDPOINT}"
+    tls:
+      insecure: true
+    headers:
+      # Elastic APM Server secret token
+      Authorization: "Bearer ${ELASTIC_APM_SERVER_SECRET}"
+
+service:
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+      level: detailed
+
+  pipelines:
+    traces:
+      receivers: [ otlp ]
+      processors: [ filter, batch/traces ]
+      exporters: [ logging ]
+    metrics:
+      receivers: [ otlp ]
+      processors: [ filter, batch/metrics ]
+      exporters: [ logging ]
+    logs:
+      receivers: [ otlp ]
+      processors: [ filter, batch/logs ]
+      exporters: [ logging ]
+
+    metrics/collector:
+      receivers: [ prometheus/collector ]
+      exporters: [ otlp/elastic ]
