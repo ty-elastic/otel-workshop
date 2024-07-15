@@ -2,6 +2,7 @@ receivers:
   otlp:
     protocols:
       grpc:
+        endpoint: 0.0.0.0:4317
 
   postgresql:
     endpoint: postgresql:5432
@@ -15,7 +16,19 @@ receivers:
       insecure: true
       insecure_skip_verify: true
 
-  prometheus:
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['0.0.0.0:8888']
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: '.*grpc_io.*'
+              action: drop
+
+  prometheus/store:
     config:
       scrape_configs:
       - job_name: 'store'
@@ -86,13 +99,18 @@ exporters:
       Authorization: "Bearer ${ELASTIC_APM_SERVER_SECRET}"
 
 service:
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+      level: detailed
+
   pipelines:
     traces:
       receivers: [ otlp ]
       processors: [ resource, batch ]
       exporters: [ otlp/elastic]
     metrics:
-      receivers: [ otlp, prometheus, postgresql]
+      receivers: [ otlp, prometheus/store, prometheus/collector, postgresql]
       processors: [ resource, batch ]
       exporters: [ otlp/elastic]
     logs:
