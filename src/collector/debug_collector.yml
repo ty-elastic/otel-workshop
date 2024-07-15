@@ -84,4 +84,4 @@ service:
     metrics/collector:
       receivers: [ prometheus/collector ]
       processors: [ filter/telemetry ]
-      exporters: [ logging/detailed, otlp/elastic]
+      exporters: [ logging/detailed, otlp/elastic ]
