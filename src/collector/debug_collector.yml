@@ -1,3 +1,7 @@
+# report:
+# - otelcol_exporter_sent_spans
+# - otelcol_processor_batch_batch_send_size_bytes () with labels.processor:batch/traces
+
 receivers:
   otlp:
     protocols:
